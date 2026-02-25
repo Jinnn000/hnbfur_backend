@@ -1,0 +1,375 @@
+const express = require("express");
+const cors = require("cors");
+const pool = require("./db"); // Import kết nối Database vừa tạo
+require("dotenv").config();
+
+const app = express();
+
+app.use(cors());
+app.use(express.json());
+
+const multer = require("multer");
+const path = require("path");
+const fs = require("fs");
+
+// 1. Tạo thư mục 'uploads' để chứa ảnh (nếu chưa có thì tự tạo)
+const uploadDir = path.join(__dirname, "uploads");
+if (!fs.existsSync(uploadDir)) {
+  fs.mkdirSync(uploadDir);
+}
+
+// 2. Cấu hình nơi lưu và tên file (đổi tên file thêm thời gian để không bị trùng)
+const storage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    cb(null, "uploads/");
+  },
+  filename: function (req, file, cb) {
+    cb(
+      null,
+      Date.now() +
+        "-" +
+        Math.round(Math.random() * 1e9) +
+        path.extname(file.originalname),
+    );
+  },
+});
+const upload = multer({ storage: storage });
+
+// 3. Cho phép Frontend truy cập vào thư mục 'uploads' qua đường link
+app.use("/uploads", express.static("uploads"));
+
+// 4. API chuyên dụng để Upload Ảnh
+app.post("/api/upload", upload.single("image"), (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ message: "Không có file nào được tải lên" });
+  }
+  // Tạo đường link url đầy đủ trả về cho Frontend
+  const imageUrl = `${req.protocol}://${req.get("host")}/uploads/${req.file.filename}`;
+  res.json({ url: imageUrl });
+});
+
+// API chuyên dụng để Upload NHIỀU ẢNH (Thư viện ảnh) - Tối đa 10 ảnh 1 lần
+app.post("/api/upload-multiple", upload.array("images", 10), (req, res) => {
+  if (!req.files || req.files.length === 0) {
+    return res.status(400).json({ message: "Không có file nào được tải lên" });
+  }
+
+  // Tạo mảng chứa các đường link url của tất cả các ảnh vừa up
+  const imageUrls = req.files.map(
+    (file) => `${req.protocol}://${req.get("host")}/uploads/${file.filename}`,
+  );
+
+  res.json({ urls: imageUrls });
+});
+
+app.get("/", (req, res) => {
+  res.send("Chào mừng đến với API Nhà Xinh - CHẠY 100% BẰNG MYSQL!");
+});
+
+// 1. API lấy danh sách sản phẩm (Có hỗ trợ lọc category và search)
+app.get("/api/products", async (req, res) => {
+  try {
+    const { category, search } = req.query;
+
+    let query = "SELECT * FROM products WHERE 1=1";
+    let queryParams = [];
+
+    if (category) {
+      if (!isNaN(category)) {
+        // Nếu Frontend gửi lên ID số (VD: ?category=1)
+        query += " AND JSON_CONTAINS(category_ids, CAST(? AS CHAR))";
+        queryParams.push(String(category));
+      } else {
+        // Nếu Frontend gửi lên chữ (VD: ?category=sofa)
+        query +=
+          " AND JSON_CONTAINS(category_ids, (SELECT CAST(id AS CHAR) FROM categories WHERE slug = ? OR name = ? LIMIT 1))";
+        queryParams.push(category, category);
+      }
+    }
+
+    if (search) {
+      query += " AND name LIKE ?";
+      queryParams.push(`%${search}%`);
+    }
+
+    query += " ORDER BY id DESC"; // Sản phẩm mới lên đầu
+    const [rows] = await pool.query(query, queryParams);
+
+    res.json({ data: rows, meta: { total: rows.length } });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Lỗi Server!" });
+  }
+});
+
+// 2. API lấy chi tiết 1 sản phẩm theo Slug
+app.get("/api/products/:slug", async (req, res) => {
+  try {
+    const [rows] = await pool.query("SELECT * FROM products WHERE slug = ?", [
+      req.params.slug,
+    ]);
+
+    if (rows.length === 0) {
+      return res.status(404).json({ message: "Không tìm thấy sản phẩm" });
+    }
+
+    res.json({ data: rows[0] });
+  } catch (error) {
+    console.error("Lỗi lấy chi tiết sản phẩm:", error);
+    res.status(500).json({ message: "Lỗi Server" });
+  }
+});
+
+// ==========================================
+// API DANH MỤC & PHÒNG
+// ==========================================
+
+// Lấy danh sách Danh mục
+app.get("/api/categories", async (req, res) => {
+  try {
+    const [rows] = await pool.query("SELECT * FROM categories");
+    res.json(rows);
+  } catch (error) {
+    res.status(500).json({ message: "Lỗi lấy danh mục" });
+  }
+});
+
+// Lấy danh sách Phòng
+app.get("/api/rooms", async (req, res) => {
+  try {
+    const [rows] = await pool.query("SELECT * FROM rooms");
+    res.json(rows);
+  } catch (error) {
+    res.status(500).json({ message: "Lỗi lấy danh sách phòng" });
+  }
+});
+
+// ==========================================
+// API CRUD CHO DANH MỤC (CATEGORIES)
+// ==========================================
+// Thêm danh mục mới
+app.post("/api/categories", async (req, res) => {
+  try {
+    const { name, slug, image } = req.body;
+    await pool.query(
+      "INSERT INTO categories (name, slug, image) VALUES (?, ?, ?)",
+      [name, slug, image],
+    );
+    res.json({ message: "Thêm thành công!" });
+  } catch (error) {
+    res.status(500).json({ message: "Lỗi thêm danh mục" });
+  }
+});
+
+// Xóa danh mục
+app.delete("/api/categories/:id", async (req, res) => {
+  try {
+    await pool.query("DELETE FROM categories WHERE id = ?", [req.params.id]);
+    res.json({ message: "Xóa thành công!" });
+  } catch (error) {
+    res.status(500).json({
+      message:
+        "Lỗi xóa danh mục (Có thể do đang có sản phẩm dùng danh mục này)",
+    });
+  }
+});
+
+// ==========================================
+// API CRUD CHO PHÒNG (ROOMS)
+// ==========================================
+// Thêm phòng mới
+app.post("/api/rooms", async (req, res) => {
+  try {
+    const { name, slug, image } = req.body;
+    await pool.query("INSERT INTO rooms (name, slug, image) VALUES (?, ?, ?)", [
+      name,
+      slug,
+      image,
+    ]);
+    res.json({ message: "Thêm thành công!" });
+  } catch (error) {
+    res.status(500).json({ message: "Lỗi thêm phòng" });
+  }
+});
+
+// Xóa phòng
+app.delete("/api/rooms/:id", async (req, res) => {
+  try {
+    await pool.query("DELETE FROM rooms WHERE id = ?", [req.params.id]);
+    res.json({ message: "Xóa thành công!" });
+  } catch (error) {
+    res.status(500).json({ message: "Lỗi xóa phòng" });
+  }
+});
+
+// API Sửa Danh mục (PUT)
+// Sửa danh mục (Có ảnh)
+app.put("/api/categories/:id", async (req, res) => {
+  try {
+    const { name, slug, image } = req.body;
+    await pool.query(
+      "UPDATE categories SET name = ?, slug = ?, image = ? WHERE id = ?",
+      [name, slug, image, req.params.id],
+    );
+    res.json({ message: "Cập nhật thành công!" });
+  } catch (error) {
+    res.status(500).json({ message: "Lỗi cập nhật danh mục" });
+  }
+});
+
+// API Sửa Phòng (PUT)
+app.put("/api/rooms/:id", async (req, res) => {
+  try {
+    const { name, slug, image } = req.body;
+    await pool.query(
+      "UPDATE rooms SET name = ?, slug = ?, image = ? WHERE id = ?",
+      [name, slug, image, req.params.id],
+    );
+    res.json({ message: "Cập nhật thành công!" });
+  } catch (error) {
+    res.status(500).json({ message: "Lỗi cập nhật phòng" });
+  }
+});
+
+// ==========================================
+// CÁC API DÀNH CHO TRANG ADMIN (THÊM, SỬA, XÓA)
+// ==========================================
+
+// 3. API Thêm sản phẩm mới (POST)
+app.post("/api/products", async (req, res) => {
+  try {
+    // BƯỚC 1: Lấy đúng tên biến có chữ 's' từ Frontend gửi lên
+    const {
+      id,
+      name,
+      slug,
+      price,
+      sku,
+      description,
+      isNew,
+      category_ids,
+      room_ids,
+      image,
+      images,
+      colors,
+      dimensions,
+      materials,
+    } = req.body;
+
+    const query = `
+  INSERT INTO products 
+  (id, name, slug, price, sku, description, isNew, category_ids, room_ids, image, images, colors, dimensions, materials) 
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`;
+
+    // BƯỚC 2: Bọc JSON.stringify() cho category_ids và room_ids trước khi lưu
+    const values = [
+      id,
+      name,
+      slug,
+      price,
+      sku,
+      description,
+      isNew ? 1 : 0,
+      JSON.stringify(category_ids || []), // Thêm dòng này
+      JSON.stringify(room_ids || []), // Thêm dòng này
+      image,
+      JSON.stringify(images || []),
+      JSON.stringify(colors || []),
+      JSON.stringify(dimensions || {}),
+      JSON.stringify(materials || []),
+    ];
+
+    await pool.query(query, values);
+    res.status(201).json({ message: "Thêm sản phẩm thành công!" });
+  } catch (error) {
+    console.error("Lỗi thêm sản phẩm:", error);
+    res.status(500).json({ message: "Lỗi Server", error: error.message });
+  }
+});
+
+// 4. API Xóa sản phẩm (DELETE)
+app.delete("/api/products/:id", async (req, res) => {
+  try {
+    const [result] = await pool.query("DELETE FROM products WHERE id = ?", [
+      req.params.id,
+    ]);
+
+    if (result.affectedRows === 0) {
+      return res
+        .status(404)
+        .json({ message: "Không tìm thấy sản phẩm để xóa" });
+    }
+
+    res.json({ message: "Xóa sản phẩm thành công!" });
+  } catch (error) {
+    console.error("Lỗi xóa sản phẩm:", error);
+    res.status(500).json({ message: "Lỗi Server" });
+  }
+});
+
+// 5. API Cập nhật sản phẩm (PUT)
+app.put("/api/products/:id", async (req, res) => {
+  try {
+    // Tương tự, lấy đúng tên biến có chữ 's'
+    const {
+      name,
+      slug,
+      price,
+      sku,
+      description,
+      isNew,
+      category_ids,
+      room_ids,
+      image,
+      images,
+      colors,
+      dimensions,
+      materials,
+    } = req.body;
+
+    const query = `
+  UPDATE products SET 
+    name=?, slug=?, price=?, sku=?, description=?, isNew=?, category_ids=?, room_ids=?, 
+    image=?, images=?, colors=?, dimensions=?, materials=?
+  WHERE id=?
+`;
+
+    // Bọc bằng JSON.stringify()
+    const values = [
+      name,
+      slug,
+      price,
+      sku,
+      description,
+      isNew ? 1 : 0,
+      JSON.stringify(category_ids || []), // Thêm dòng này
+      JSON.stringify(room_ids || []), // Thêm dòng này
+      image,
+      JSON.stringify(images || []),
+      JSON.stringify(colors || []),
+      JSON.stringify(dimensions || {}),
+      JSON.stringify(materials || []),
+      req.params.id,
+    ];
+
+    const [result] = await pool.query(query, values);
+
+    if (result.affectedRows === 0) {
+      return res
+        .status(404)
+        .json({ message: "Không tìm thấy sản phẩm để cập nhật" });
+    }
+
+    res.json({ message: "Cập nhật sản phẩm thành công!" });
+  } catch (error) {
+    console.error("Lỗi cập nhật sản phẩm:", error);
+    res.status(500).json({ message: "Lỗi Server" });
+  }
+});
+
+// Khởi động server
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`🚀 Server đang chạy tại http://localhost:${PORT}`);
+});
