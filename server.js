@@ -232,6 +232,58 @@ app.put("/api/rooms/:id", async (req, res) => {
 });
 
 // ==========================================
+// API CRUD CHO MÀU SẮC (COLORS)
+// ==========================================
+
+// 1. Lấy danh sách màu sắc
+app.get("/api/colors", async (req, res) => {
+  try {
+    const [rows] = await pool.query("SELECT * FROM colors ORDER BY id DESC");
+    res.json(rows);
+  } catch (error) {
+    res.status(500).json({ message: "Lỗi lấy danh sách màu" });
+  }
+});
+
+// 2. Thêm màu mới
+app.post("/api/colors", async (req, res) => {
+  try {
+    const { name, value } = req.body;
+    await pool.query(
+      "INSERT INTO colors (name, value) VALUES (?, ?)",
+      [name, value]
+    );
+    res.json({ message: "Thêm màu thành công!" });
+  } catch (error) {
+    res.status(500).json({ message: "Lỗi thêm màu" });
+  }
+});
+
+// 3. Sửa màu
+app.put("/api/colors/:id", async (req, res) => {
+  try {
+    const { name, value } = req.body;
+    await pool.query(
+      "UPDATE colors SET name = ?, value = ? WHERE id = ?",
+      [name, value, req.params.id]
+    );
+    res.json({ message: "Cập nhật màu thành công!" });
+  } catch (error) {
+    res.status(500).json({ message: "Lỗi cập nhật màu" });
+  }
+});
+
+// 4. Xóa màu
+app.delete("/api/colors/:id", async (req, res) => {
+  try {
+    await pool.query("DELETE FROM colors WHERE id = ?", [req.params.id]);
+    res.json({ message: "Xóa màu thành công!" });
+  } catch (error) {
+    res.status(500).json({ message: "Lỗi xóa màu" });
+  }
+});
+
+// ==========================================
 // CÁC API DÀNH CHO TRANG ADMIN (THÊM, SỬA, XÓA)
 // ==========================================
 
