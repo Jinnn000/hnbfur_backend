@@ -488,34 +488,41 @@ app.get("/api/lookbooks", async (req, res) => {
 // 2. Lấy chi tiết 1 Lookbook theo Slug (Có kèm data sản phẩm)
 app.get("/api/lookbooks/:slug", async (req, res) => {
   try {
-    const [lookbooks] = await pool.query("SELECT * FROM lookbooks WHERE slug = ?", [req.params.slug]);
+    const [lookbooks] = await pool.query(
+      "SELECT * FROM lookbooks WHERE slug = ?",
+      [req.params.slug],
+    );
 
     if (lookbooks.length === 0) {
       return res.status(404).json({ message: "Không tìm thấy Lookbook" });
     }
 
     const lookbook = lookbooks[0];
-    
+
     // Nếu có điểm neo, tự động đi fetch thông tin cơ bản của các Product đó luôn
     // để Frontend không phải gọi API nhiều lần
     let hotspots = [];
     try {
-      hotspots = typeof lookbook.hotspots === 'string' ? JSON.parse(lookbook.hotspots) : (lookbook.hotspots || []);
-    } catch(e) {}
+      hotspots =
+        typeof lookbook.hotspots === "string"
+          ? JSON.parse(lookbook.hotspots)
+          : lookbook.hotspots || [];
+    } catch (e) {}
 
     // Lấy danh sách Product IDs từ hotspots
-    const productIds = hotspots.map(h => h.product_id).filter(id => id);
+    const productIds = hotspots.map((h) => h.product_id).filter((id) => id);
 
     if (productIds.length > 0) {
       // Truy vấn lấy Tên, Giá, Ảnh, Slug của các sản phẩm có trong Lookbook này
       const [products] = await pool.query(
-        "SELECT id, name, slug, price, image FROM products WHERE id IN (?)", 
-        [productIds]
+        "SELECT id, name, slug, price, image FROM products WHERE id IN (?)",
+        [productIds],
       );
-      
+
       // Ghép thông tin sản phẩm vào điểm neo tương ứng
-      lookbook.hotspots = hotspots.map(spot => {
-        const productData = products.find(p => p.id === spot.product_id);
+      lookbook.hotspots = hotspots.map((spot) => {
+        // Dùng == hoặc Number() để đồng nhất kiểu dữ liệu
+        const productData = products.find((p) => p.id == spot.product_id);
         return { ...spot, product: productData || null };
       });
     } else {
@@ -533,9 +540,15 @@ app.get("/api/lookbooks/:slug", async (req, res) => {
 app.post("/api/lookbooks", async (req, res) => {
   try {
     const { title, slug, description, image, hotspots } = req.body;
-    
+
     const query = `INSERT INTO lookbooks (title, slug, description, image, hotspots) VALUES (?, ?, ?, ?, ?)`;
-    const values = [title, slug, description, image, JSON.stringify(hotspots || [])];
+    const values = [
+      title,
+      slug,
+      description,
+      image,
+      JSON.stringify(hotspots || []),
+    ];
 
     await pool.query(query, values);
     res.status(201).json({ message: "Thêm Lookbook thành công!" });
@@ -549,9 +562,16 @@ app.post("/api/lookbooks", async (req, res) => {
 app.put("/api/lookbooks/:id", async (req, res) => {
   try {
     const { title, slug, description, image, hotspots } = req.body;
-    
+
     const query = `UPDATE lookbooks SET title=?, slug=?, description=?, image=?, hotspots=? WHERE id=?`;
-    const values = [title, slug, description, image, JSON.stringify(hotspots || []), req.params.id];
+    const values = [
+      title,
+      slug,
+      description,
+      image,
+      JSON.stringify(hotspots || []),
+      req.params.id,
+    ];
 
     await pool.query(query, values);
     res.json({ message: "Cập nhật Lookbook thành công!" });
